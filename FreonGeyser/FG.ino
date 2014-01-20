@@ -57,7 +57,22 @@ CS_Container CS[4];
 short pressurePin = 2;
 SlowPressure SlowP;
 ByteBuffer fastPressureBuffer;
+short fastPBuffer;
 
+/*Define the voltage ADC value that you would like as a cutoff
+point for an event */
+#define cameraTriggerADCPSI 40
+/*place to store the ADC cutoff for trigger*/
+int PressureADCCutoff;
+
+/*Pulsing pin, sampleTime for fast pressure, and min time between triggers*/
+#define pulsePin 53
+/*next 2 values are in ms*/
+#define fastPSampleInterval 1
+#define timeBetweenTriggers 10000
+/*Memory for tracking the last trigger time, last sample time
+and time elapsed since last event */
+int LastTriggerTime_millisecs, pBufferTimeTracker, timeElapsedLastEvt;
 
 
 /* Specify the links and initial tuning parameters
@@ -129,6 +144,11 @@ void setup()
     pinMode(PELT_PWM3, OUTPUT);
 
     fastPressureBuffer.init(1024);
+
+    /*Store the presure ADC cutoff value once in memory*/
+    PressureADCCutoff = (int) (cameraTriggerADCPSI *0.016/100.0 + 0.004 ) * 150 *1024 / 3.3;
+    pinMode(pulsePin, OUTPUT);
+
 
 
 }
@@ -221,11 +241,23 @@ void SweepSenses(void)
 }
 
 /*Funtion to populate the fast pressure buffer*/
-void updateFastPressure(void){
+void updateFastPressure(int currentMillisec){
     /*Populate pressure*/
-    fastPressureBuffer.put(analogRead(pressurePin));
+    fastPBuffer = analogRead(pressurePin);
+    fastPressureBuffer.put(fastPBuffer);
 
-    if
+    timeElapsedLastEvt = currentMillisec - LastTriggerTime_millisecs;
+
+    if (fastPBuffer>=PressureADCCutoff and timeElapsedLastEvt>=timeBetweenTriggers){
+        /*update trigger time*/
+        LastTriggerTime_millisecs = currentMillisec;
+        /*Send a pulse to camera trig*/
+        digitalWrite(pulsePin, HIGH);
+        delay(10);
+        digitalWrite(pulsePin, LOW);
+        /*Send fast pressure data to DAQ*/
+        AGeyserInfoSweep.FastPressureSweep(&fastPressureBuffer);
+    }
 }
 
 void UpdatePIDControl(void)
@@ -246,7 +278,7 @@ void UpdatePIDControl(void)
 /*This is the testing function nobody cares about */
 void loop()
 {
-    //doPIDMagic(1,1,1);
+
     /* Memory for current time */
     register unsigned long currentMillisecs = millis();
 
@@ -259,8 +291,12 @@ void loop()
         AGeyserInfoSweep.PISweep(&SlowP, CS, (char) Output1, (char) Output2, (char) Output3);
         UpdatePIDControl();
     }
-
-
+    /*Fast pressure routine*/
+    if(currentMillisecs - pBufferTimeTracker >= fastPSampleInterval){
+        updateFastPressure(currentMillisecs);
+        pBufferTimeTracker = currentMillisecs;
+    }
+    /*Serial in*/
     if (stringComplete) {
         ParseSerial();
         //Serial.write(StrParseResult);
